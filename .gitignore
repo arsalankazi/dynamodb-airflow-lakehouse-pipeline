@@ -1,0 +1,24 @@
+# Environments
+venv/
+env/
+.venv/
+
+# Environment Variables
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs & Data
+logs/
+localstack-data/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+
+# Archives
+*.zip

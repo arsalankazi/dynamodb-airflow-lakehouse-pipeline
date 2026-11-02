@@ -1,0 +1,5 @@
+boto3
+pytest==8.0.0
+pyspark==3.5.1
+ruff==0.3.0
+apache-airflow==2.8.1
