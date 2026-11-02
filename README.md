@@ -16,11 +16,7 @@
 
 An end-to-end, production-grade **Data Engineering pipeline** that captures real-time e-commerce order data from **DynamoDB (LocalStack)**, streams it via **Lambda (LocalStack)** to an **S3 Data Lake (LocalStack)**, transforms it using **PySpark**, orchestrates it with **Apache Airflow**, and visualizes business metrics on a **Streamlit Dashboard**.
 
-<<<<<<< HEAD
 This project demonstrates the **Medallion Architecture** (Raw → Processed) and event-driven design, built entirely locally using **Docker** and **LocalStack** (zero cloud infrastructure costs). It also includes a fully automated **CI/CD pipeline** with unit testing and code linting.
-=======
-This project demonstrates the **Medallion Architecture** (Raw → Processed) and event-driven design, built entirely locally using **Docker** and **LocalStack** (No real AWS used).
->>>>>>> 5116e22a4ae09c95b9cbef35be304dc22909fbcd
 
 ---
 
