@@ -160,7 +160,7 @@ sequenceDiagram
     DDB-->>Stream: Emit INSERT Event
     Stream->>Lambda: Trigger with Event Payload
     Lambda->>Lambda: Parse & Format JSON
-    Lambda->>S3: put_object(raw/orders/...)
+    Lambda->>S3: put_object(raw/orders/{order_id}.json)
     S3-->>Lambda: 200 OK
     Lambda-->>Stream: Acknowledge
 ```
@@ -174,7 +174,7 @@ sequenceDiagram
 | **Orchestration** | Apache Airflow, Docker Compose |
 | **Data Storage** | S3 Data Lake (LocalStack), DynamoDB (LocalStack) |
 | **Compute & ETL** | PySpark, AWS Lambda (LocalStack), Pandas |
-| **Local Cloud** | **LocalStack**, WSL2 (Windows) |
+| **Local AWS Emulation** | **LocalStack**, WSL2 (Windows) |
 | **Visualization** | Streamlit, Plotly |
 | **CI/CD & Testing** | GitHub Actions, PyTest, Ruff |
 | **Languages** | Python, SQL, Bash |
@@ -183,10 +183,11 @@ sequenceDiagram
 
 ## 🌟 Key Engineering Features (Interview Highlights)
 
+- **Idempotent S3 Ingestion:** Lambda uses `order_id` as a deterministic S3 object key, ensuring duplicate DynamoDB Stream events (at-least-once delivery) overwrite the same object instead of creating duplicates.
 - **Change Data Capture (CDC):** Utilized DynamoDB Streams (LocalStack) + Lambda (LocalStack) to capture state changes in near real-time without heavy DB polling.
 - **Data Quality & Quarantine:** PySpark enforces strict schemas. Invalid records (e.g., negative price, missing IDs) are routed to a dedicated Quarantine S3 bucket to prevent downstream corruption.
 - **Hive Partitioning:** S3 data is partitioned (`year=/month=/day=/`). This enables **Partition Pruning**, reducing query costs and execution time by up to **90%**.
-- **Quality Gate Circuit Breaker:** An Airflow `PythonOperator` reads quality metrics from S3 post-ETL. If the failure rate exceeds **20%**, the pipeline fails automatically.
+- **Quality Gate Circuit Breaker:** PySpark writes `_quality/metrics.json` to S3. The Airflow `PythonOperator` reads it and fails the DAG if `failure_rate > 20%`.
 - **OS-Agnostic IaC:** A Python-based deployment script (`deploy.py`) is used instead of Bash for cross-platform compatibility (Windows/Mac/Linux).
 - **Automated CI/CD:** GitHub Actions workflow runs on every push to lint code and execute unit tests.
 
@@ -194,16 +195,15 @@ sequenceDiagram
 
 ## 🧪 Testing & Code Quality
 
-To ensure production-grade reliability, the project includes:
-
-- **Ruff:** An extremely fast Python linter used for enforcing PEP 8 standards and import sorting.
-- **PyTest:** Unit tests are written for:
-  - **DAG Integrity:** Ensures the Airflow DAG loads without syntax errors and contains expected tasks.
-  - **PySpark Transformations:** Validates business logic (e.g., revenue calculation, cancellation flags) against mock data.
+To ensure production-grade reliability, the project includes **Ruff** for PEP 8 linting and **PyTest** for DAG integrity and PySpark transformation testing.
 
 Run tests locally inside the Docker container:
 
 ```bash
+# Linux / macOS
+docker compose exec airflow-scheduler pytest /opt/airflow/tests/ -v
+
+# Windows (git-bash) — MSYS path conversion must be disabled
 MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tests/ -v
 ```
 
@@ -212,9 +212,9 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 ## 🔒 Security & Configuration
 
 - **No Hardcoded Secrets:** The repository does not contain any real AWS credentials. Mock credentials (`test`) are used exclusively for the **LocalStack** environment.
-- **Environment Variables:** Sensitive configurations (Airflow passwords, LocalStack access keys) are managed via a `.env` file, which is strictly git-ignored.
+- **Environment Variables:** Sensitive configurations (Airflow passwords, LocalStack keys) are managed via a `.env` file, which is strictly git-ignored.
 - **Local Dev Defaults:** For local emulation, default credentials (`admin`/`admin`) are provided in `.env.example`. For production deployments, these would be replaced by **AWS Secrets Manager** or GitHub Actions Secrets.
-- **Idempotent Scripts:** The IaC deployment scripts are designed to be idempotent — they can be run safely multiple times without causing resource duplication.
+- **Idempotent Scripts:** The IaC deployment scripts are idempotent — they can be run safely multiple times without causing resource duplication.
 - **Network Isolation:** All LocalStack ports (`4566`), Airflow (`8080`), and Streamlit (`8501`) are bound to `127.0.0.1` — not exposed publicly.
 
 ---
@@ -225,18 +225,18 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 .
 ├── .github/workflows/     # GitHub Actions CI/CD pipeline
 ├── dags/                  # Airflow DAG definitions
-│   └── orders_lakehouse_dag.py
 ├── lambda/                # DynamoDB Stream to S3 Lambda code (LocalStack)
 ├── spark_jobs/            # PySpark ETL & Analytics scripts
 ├── dashboards/            # Streamlit App code
-├── tests/                 # PyTest suite (DAG integrity & Transformations)
-├── scripts/               # Supporting scripts
-├── deploy.py              # OS-Agnostic Infrastructure Provisioning (IaC, LocalStack)
+├── tests/                 # PyTest suite
+├── deploy.py              # OS-Agnostic Infrastructure Provisioning (LocalStack)
 ├── destroy.py             # Environment Teardown Script
 ├── docker-compose.yml     # Multi-container orchestration
 ├── pyproject.toml         # Ruff linter configuration
 ├── requirements.txt       # Python dependencies
-└── .env.example           # Environment variables template
+├── .env.example           # Sanitized environment variables template
+├── .gitignore             # Exclusion rules for secrets, logs, and venv
+└── LICENSE                # MIT License
 ```
 
 ---
@@ -246,8 +246,8 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 ### Prerequisites
 
 - Docker Desktop installed and running.
-- Python 3.8+ installed.
-- **LocalStack** — bundled in `docker-compose.yml`, no separate install needed.
+- **Hardware:** 8GB+ RAM allocated to Docker Desktop (Airflow + Spark + LocalStack + Streamlit stack).
+- Python 3.10+ installed.
 - AWS CLI (optional, for LocalStack inspection).
 
 ### 1. Clone the Repository
@@ -270,19 +270,28 @@ pip install -r requirements.txt
 python deploy.py
 ```
 
-This script starts Docker containers, waits for **LocalStack** to be ready, and provisions S3 buckets, DynamoDB table, and Lambda function inside **LocalStack**.
-
 ### 4. Trigger the Pipeline
 
-1. Open Airflow UI: `http://localhost:8080`
-2. **Local Dev Credentials:** Use `admin` / `admin` (configured securely via `.env` for local emulation).
-3. Unpause and trigger the `orders_lakehouse_etl` DAG.
+1. Open Airflow UI: `http://localhost:8080` (admin/admin)
+2. Unpause and trigger the `orders_lakehouse_etl` DAG.
 
 ### 5. View Dashboard
 
 Open Streamlit: `http://localhost:8501`
 
-### 6. Clean Up (Optional)
+### 6. Verify Pipeline Worked
+
+Run these commands to confirm data made it through the layers:
+
+```bash
+# Check Bronze (Raw JSON)
+aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-raw-orders/raw/orders/ --recursive | head -5
+
+# Check Silver (Processed Parquet)
+aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-processed-orders/orders/ --recursive | head -5
+```
+
+### 7. Clean Up (Optional)
 
 ```bash
 python destroy.py
@@ -292,10 +301,9 @@ python destroy.py
 
 ## 🔮 Future Improvements
 
-- Replace **LocalStack** with **Terraform** to provision real cloud infrastructure (EKS, RDS for Airflow metadata).
-- Integrate **Great Expectations** for deeper data profiling.
-- Add deployment steps to push Docker images to a container registry (**Amazon ECR** in production).
-- Migrate from local `admin`/`admin` to **AWS Secrets Manager** for credential lifecycle.
+- **Migrate IaC:** Replace `deploy.py` boto3 scripting with **Terraform** for declarative infrastructure provisioning targeting real cloud in production.
+- **Data Profiling:** Integrate **Great Expectations** for deeper data quality profiling.
+- **Container Registry:** Add deployment steps to push Docker images to a container registry (e.g., Amazon ECR in production).
 
 ---
 
@@ -306,7 +314,7 @@ python destroy.py
 </p>
 
 ### **Kazi Arsalan Ajaj Ahmed**
-Data Engineer (Fresher) | Big Data & Cloud
+*Data Engineer | Big Data & Cloud*
 
 [![GitHub](https://img.shields.io/badge/GitHub-Profile-181717?style=flat&logo=github)](https://github.com/arsalankazi)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin)](https://linkedin.com/in/arsalankazi)
