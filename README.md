@@ -306,7 +306,7 @@ python destroy.py
 </p>
 
 ### **Kazi Arsalan Ajaj Ahmed**
-*Data Engineer & Lakehouse Architect*
+Data Engineer (Fresher) | Big Data & Cloud
 
 [![GitHub](https://img.shields.io/badge/GitHub-Profile-181717?style=flat&logo=github)](https://github.com/arsalankazi)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin)](https://linkedin.com/in/arsalankazi)
