@@ -40,7 +40,8 @@ def lambda_handler(event, context):
         # Construct S3 key using Hive-style partitioning
         key = (
             f"raw/orders/year={now.year}/month={now.month:02d}/"
-            f"day={now.day:02d}/hour={now.hour:02d}/{item['order_id']}.json"
+            f"day={now.day:02d}/hour={now.hour:02d}/"
+            f"{item['order_id']}_{int(now.timestamp())}.json"
         )
         
         # Write the item to S3

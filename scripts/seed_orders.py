@@ -37,4 +37,4 @@ def seed(count=50):
     print(f"Seeded {count} orders successfully!")
 
 if __name__ == "__main__":
-    seed(50)
+    seed(5000) 
