@@ -184,16 +184,35 @@ sequenceDiagram
 
 ---
 
-## 🌟 Key Engineering Features (Interview Highlights)
+## 🌟 Key Engineering Features
 
 - **Append-Only CDC History:** Lambda uses a composite key of `order_id` and DynamoDB `eventID` for S3 object names, creating an immutable append-only event log. Lambda also injects `event_timestamp` into the JSON payload for downstream ordering.
 - **Silver Layer Deduplication:** PySpark applies window deduplication (`ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY event_timestamp DESC)`) to serve the latest state to dashboards, while retaining full event history in the Silver layer.
-- **Data Quality & Quarantine (DLQ):** PySpark enforces strict schemas. Invalid records (e.g., negative price, missing IDs) are routed to a dedicated Quarantine S3 bucket to prevent downstream corruption.
+- **Data Quality & Quarantine:** PySpark enforces strict schemas. Invalid records (e.g., negative price, missing IDs) are routed to a dedicated Quarantine S3 bucket to prevent downstream corruption.
 - **Hive Partitioning:** S3 data is partitioned (`year=/month=/day=/`). This enables **Partition Pruning**, significantly reducing data scanned during queries.
 - **Quality Gate Circuit Breaker:** PySpark writes `_quality/metrics.json` to S3. The Airflow `PythonOperator` reads it and fails the DAG if `failure_rate > 20%`.
 - **OS-Agnostic IaC:** A Python-based deployment script (`deploy.py`) is used instead of Bash for cross-platform compatibility (Windows/Mac/Linux).
 - **Volume Validation:** Smoke-tested the pipeline at a 10,000-record batch size to verify PySpark partition writes and S3 layout stability.
-- **Automated CI/CD:** GitHub Actions workflow runs on every push to lint code and execute unit tests.
+- **Automated CI/CD:** GitHub Actions workflow runs on every push to lint code (`ruff`) and execute unit tests (`pytest`).
+
+---
+
+## 🔄 End-to-End Execution Flow (Step-by-Step)
+
+This pipeline is designed to be fully reproducible. Here is the exact execution flow of all scripts and components:
+
+| Step | Script / Component | Action Performed |
+| :--- | :--- | :--- |
+| **1. Setup** | `python deploy.py` | Spins up Docker containers (Airflow, LocalStack, Postgres, Streamlit). Provisions S3 buckets, DynamoDB table (with Streams), and deploys the Lambda function. |
+| **2. Chaos Test (Optional)** | `python scripts/verify_quarantine.py --inject` | Injects a deliberately invalid record (negative price) into DynamoDB to test the Data Quality gate. |
+| **3. Orchestration** | Airflow UI (`localhost:8080`) | Trigger the `orders_lakehouse_etl` DAG. Airflow manages the sequence of steps below. |
+| **4. Seed Data** | `scripts/seed_orders.py` (via Airflow) | Generates 10,000 mock orders and inserts them into DynamoDB. |
+| **5. Ingestion** | `lambda/dynamodb_stream_to_s3.py` (via LocalStack) | DynamoDB Streams trigger the Lambda, which writes raw JSON to the S3 Bronze layer. |
+| **6. Transformation** | `spark_jobs/clean_orders.py` (via Airflow) | PySpark reads Bronze JSON, deduplicates using Window functions, routes bad data to Quarantine, and writes Parquet to the Silver layer. |
+| **7. Analytics** | `spark_jobs/analytics_query.py` (via Airflow) | PySpark aggregates Silver Parquet data into JSON metrics for the Gold layer. |
+| **8. Verification** | `python scripts/verify_quarantine.py` | Fetches the Quarantine records and Quality Metrics from S3 to prove the pipeline handled data correctly. |
+| **9. Visualization** | Streamlit UI (`localhost:8501`) | Displays the Gold layer metrics on an interactive dashboard. |
+| **10. Teardown** | `python destroy.py` | Stops all Docker containers and wipes the LocalStack volume to ensure a clean slate for the next run. |
 
 ---
 
@@ -213,16 +232,6 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 
 ---
 
-## 🔒 Security & Configuration
-
-- **No Hardcoded Secrets:** The repository does not contain any real AWS credentials. Mock credentials (`test`) are used exclusively for the **LocalStack** environment.
-- **Environment Variables:** Sensitive configurations (Airflow passwords, LocalStack keys) are managed via a `.env` file, which is strictly git-ignored.
-- **Local Dev Defaults:** For local emulation, default credentials (`admin`/`admin`) are provided in `.env.example`. For production deployments, these would be replaced by **AWS Secrets Manager** or GitHub Actions Secrets.
-- **Idempotent Scripts:** The IaC deployment scripts are idempotent. They can be run safely multiple times without causing resource duplication.
-- **Network Isolation:** All LocalStack ports (`4566`), Airflow (`8080`), and Streamlit (`8501`) are bound to `127.0.0.1`, not exposed publicly.
-
----
-
 ## 📂 Project Structure
 
 ```text
@@ -232,8 +241,8 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 ├── lambda/                # DynamoDB Stream to S3 Lambda code (LocalStack)
 ├── spark_jobs/            # PySpark ETL & Analytics scripts
 ├── dashboards/            # Streamlit App code
+├── scripts/               # Supporting scripts (seed_orders.py, verify_quarantine.py)
 ├── tests/                 # PyTest suite
-├── scripts/               # Diagnostic & data generation scripts
 ├── deploy.py              # OS-Agnostic Infrastructure Provisioning (LocalStack)
 ├── destroy.py             # Environment Teardown Script
 ├── docker-compose.yml     # Multi-container orchestration
@@ -246,12 +255,12 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 
 ---
 
-## 🚀 How to Run Locally (One-Click Deploy)
+## 🚀 How to Run Locally
 
 ### Prerequisites
 
 - Docker Desktop installed and running.
-- **Hardware:** 8GB+ RAM allocated to Docker Desktop (Airflow + Spark + LocalStack + Streamlit stack).
+- **Hardware:** 8GB+ RAM allocated to Docker Desktop.
 - Python 3.10+ installed.
 - AWS CLI (optional, for LocalStack inspection).
 
@@ -269,7 +278,7 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-### 3. Deploy Infrastructure & Containers
+### 3. Deploy Infrastructure
 
 ```bash
 python deploy.py
@@ -284,45 +293,30 @@ python deploy.py
 
 Open Streamlit: `http://localhost:8501`
 
-### 6. Verify Pipeline Worked
+### 6. Verify Data Quality & Quarantine
 
-Run these commands to confirm data made it through the layers:
-
-```bash
-# Check Bronze (Raw JSON)
-aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-raw-orders/raw/orders/ --recursive | head -5
-
-# Check Silver (Processed Parquet)
-aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-processed-orders/orders/ --recursive | head -5
-```
-
-### 7. Verify Data Quality & Quarantine
-
-I have provided a dedicated diagnostic script to prove that the pipeline correctly handles bad data. This script checks the `ecommerce-quarantine` bucket and prints the exact quality metrics written by PySpark.
+Run the diagnostic script to verify that bad data was routed to the DLQ.
 
 ```bash
 python scripts/verify_quarantine.py
 ```
+*(To test the flow from scratch, run `python scripts/verify_quarantine.py --inject` BEFORE triggering the DAG).*
 
-**What it does:**
-- Connects to LocalStack S3.
-- Fetches any invalid records that were routed to the Quarantine bucket (DLQ).
-- Reads the `quality_metrics.json` file generated by the Spark job.
-- Outputs a clean report showing the failure rate compared to the 20% SLA threshold.
-
-To test the quarantine flow, you can inject a bad record first:
-
-```bash
-python scripts/verify_quarantine.py --inject
-```
-
-Then trigger the DAG in Airflow and run the verify command again.
-
-### 8. Clean Up (Optional)
+### 7. Clean Up (Optional)
 
 ```bash
 python destroy.py
 ```
+
+---
+
+## 🔒 Security & Configuration
+
+- **No Hardcoded Secrets:** The repository does not contain any real AWS credentials. Mock credentials (`test`) are used exclusively for the **LocalStack** environment.
+- **Environment Variables:** Sensitive configurations (Airflow passwords, LocalStack keys) are managed via a `.env` file, which is strictly git-ignored.
+- **Local Dev Defaults:** For local emulation, default credentials (`admin`/`admin`) are provided in `.env.example`. For production deployments, these would be replaced by **AWS Secrets Manager** or GitHub Actions Secrets.
+- **Idempotent Scripts:** The IaC deployment scripts are idempotent. They can be run safely multiple times without causing resource duplication.
+- **Network Isolation:** All LocalStack ports (`4566`), Airflow (`8080`), and Streamlit (`8501`) are bound to `127.0.0.1`, not exposed publicly.
 
 ---
 

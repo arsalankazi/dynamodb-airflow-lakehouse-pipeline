@@ -1,7 +1,7 @@
 import os
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, current_timestamp, to_date, when, row_number
+from pyspark.sql.functions import col, current_timestamp, row_number, to_date, when
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,
