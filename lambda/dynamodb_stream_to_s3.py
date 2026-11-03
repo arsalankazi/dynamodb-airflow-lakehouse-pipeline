@@ -37,14 +37,25 @@ def lambda_handler(event, context):
         # Extract the new image of the item
         item = _deserialize(record["dynamodb"]["NewImage"])
         
+        # FIX 1: Inject event_timestamp into payload for Silver layer deduplication
+        # Using ApproximateCreationDateTime from the DynamoDB Stream record (or 'now' as fallback)
+        event_ts = record.get("dynamodb", {}).get("ApproximateCreationDateTime", now.timestamp())
+        event_timestamp = datetime.fromtimestamp(event_ts, tz=timezone.utc).isoformat()
+        item["event_timestamp"] = event_timestamp
+        
+        # FIX 2: Use eventID for deterministic idempotency (stable across retries)
+        event_id = record.get("eventID", "unknown")
+        
         # Construct S3 key using Hive-style partitioning
+        # Append-only CDC: order_id + event_id ensures each event is a new file, 
+        # but retries overwrite the same file.
         key = (
             f"raw/orders/year={now.year}/month={now.month:02d}/"
             f"day={now.day:02d}/hour={now.hour:02d}/"
-            f"{item['order_id']}_{int(now.timestamp())}.json"
+            f"{item['order_id']}_{event_id}.json"
         )
         
-        # Write the item to S3
+        # Write the item to S3 (Body now includes event_timestamp)
         s3.put_object(Bucket=RAW_BUCKET, Key=key, Body=json.dumps(item))
         written += 1
         
