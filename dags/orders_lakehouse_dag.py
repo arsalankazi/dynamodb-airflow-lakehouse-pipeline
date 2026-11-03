@@ -65,7 +65,7 @@ with DAG(
     wait_raw = S3KeySensor(
         task_id="wait_for_lambda_s3",
         bucket_name=RAW_BUCKET,
-        bucket_key="raw/orders/year=*/month=*/day=*/hour=*/*.json",
+        bucket_key="raw/orders/year=*/month=*/day=*/*.json",  
         wildcard_match=True,
         aws_conn_id="localstack",
         timeout=120,

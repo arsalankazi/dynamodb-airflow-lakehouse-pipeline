@@ -1,4 +1,4 @@
-# 🚀 Real-Time E-commerce Data Lakehouse Pipeline
+# Real-Time E-commerce Data Lakehouse Pipeline
 
 [![Data Pipeline CI](https://github.com/arsalankazi/dynamodb-airflow-lakehouse-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/arsalankazi/dynamodb-airflow-lakehouse-pipeline/actions/workflows/ci.yml)
 
@@ -22,9 +22,10 @@ This project demonstrates the **Medallion Architecture** (Raw → Processed) and
 
 ## 🏗️ 1. System Architecture
 
-The pipeline uses a modern, serverless, event-driven architecture — all AWS services emulated locally via **LocalStack**:
+The pipeline uses a modern, serverless, event-driven architecture. All AWS services are emulated locally via **LocalStack**.
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#0d3c61', 'textColor': '#ffffff'}, 'flowchart': {'nodeSpacing': 40, 'rankSpacing': 40}}}%%
 flowchart TD
     DB[(DynamoDB<br/>LocalStack<br/>Orders Table)]
     Stream[DynamoDB Streams<br/>LocalStack]
@@ -84,6 +85,7 @@ flowchart TD
 The pipeline is orchestrated by a custom Airflow DAG (`orders_lakehouse_etl`) that manages dependencies, retries, data quality gates, and automated dashboard aggregation.
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#0d3c61', 'textColor': '#ffffff'}, 'flowchart': {'nodeSpacing': 40, 'rankSpacing': 40}}}%%
 flowchart LR
     A["seed_dynamodb<br/>(BashOperator)"] --> B["wait_for_lambda_s3<br/>(S3KeySensor)"]
     B --> C["spark_clean_validate<br/>(BashOperator)"]
@@ -101,16 +103,17 @@ flowchart LR
 Our S3 Data Lake (emulated via **LocalStack**) is organized into distinct layers for scalability and re-processing:
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#0d3c61', 'textColor': '#ffffff'}, 'flowchart': {'nodeSpacing': 30, 'rankSpacing': 30}}}%%
 flowchart LR
-    subgraph Bronze ["🥉 Bronze Layer (Raw)"]
+    subgraph Bronze ["Bronze Layer (Raw)"]
         direction TB
         B1["s3://ecommerce-raw-orders/"]
         B2["Format: JSON"]
-        B3["Partition: year=/month=/day=/hour="]
+        B3["Partition: year=/month=/day="]
         B1 --- B2 --- B3
     end
 
-    subgraph Silver ["🥈 Silver Layer (Processed)"]
+    subgraph Silver ["Silver Layer (Processed)"]
         direction TB
         S1["s3://ecommerce-processed-orders/"]
         S2["Format: Snappy Parquet"]
@@ -118,7 +121,7 @@ flowchart LR
         S1 --- S2 --- S3
     end
 
-    subgraph Gold ["🥇 Gold Layer (Serving)"]
+    subgraph Gold ["Gold Layer (Serving)"]
         direction TB
         G1["s3://ecommerce-dashboard/"]
         G2["Format: JSON"]
@@ -146,7 +149,7 @@ flowchart LR
 
 ## ⚡ 4. Event-Driven Sequence Diagram
 
-How a single order flows through the system in near real-time — every AWS hop is handled by **LocalStack**:
+How a single order flows through the system in near real-time. Every AWS hop is handled by **LocalStack**.
 
 ```mermaid
 sequenceDiagram
@@ -183,14 +186,13 @@ sequenceDiagram
 
 ## 🌟 Key Engineering Features (Interview Highlights)
 
-- **Append-Only CDC History:** Lambda uses a composite key of `order_id` and DynamoDB `eventID` for S3 object names, creating an immutable append-only event log. Lambda also injects `event_timestamp` (from `ApproximateCreationDateTime`) into the JSON payload for downstream ordering. This preserves full CDC history while ensuring deterministic handling of Lambda retries.
-- **Silver Layer Time-Travel Deduplication:** PySpark applies window deduplication (`ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY event_timestamp DESC)`) to serve the latest state to dashboards, while retaining full event history in the Silver layer for point-in-time querying.
-- **Change Data Capture (CDC):** Utilized DynamoDB Streams (LocalStack) + Lambda (LocalStack) to capture state changes in near real-time without heavy DB polling.
-- **Data Quality & Quarantine:** PySpark enforces strict schemas. Invalid records (e.g., negative price, missing IDs) are routed to a dedicated Quarantine S3 bucket to prevent downstream corruption.
-- **Hive Partitioning:** S3 data is partitioned (`year=/month=/day=/`). This enables **Partition Pruning**, reducing query costs and execution time by up to **90%**.
+- **Append-Only CDC History:** Lambda uses a composite key of `order_id` and DynamoDB `eventID` for S3 object names, creating an immutable append-only event log. Lambda also injects `event_timestamp` into the JSON payload for downstream ordering.
+- **Silver Layer Deduplication:** PySpark applies window deduplication (`ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY event_timestamp DESC)`) to serve the latest state to dashboards, while retaining full event history in the Silver layer.
+- **Data Quality & Quarantine (DLQ):** PySpark enforces strict schemas. Invalid records (e.g., negative price, missing IDs) are routed to a dedicated Quarantine S3 bucket to prevent downstream corruption.
+- **Hive Partitioning:** S3 data is partitioned (`year=/month=/day=/`). This enables **Partition Pruning**, significantly reducing data scanned during queries.
 - **Quality Gate Circuit Breaker:** PySpark writes `_quality/metrics.json` to S3. The Airflow `PythonOperator` reads it and fails the DAG if `failure_rate > 20%`.
 - **OS-Agnostic IaC:** A Python-based deployment script (`deploy.py`) is used instead of Bash for cross-platform compatibility (Windows/Mac/Linux).
-- **Volume Validation:** Smoke-tested the pipeline at a 5,000-record batch size (a 5× increase over the baseline fixture) to verify PySpark partition writes and S3 layout stability under load.
+- **Volume Validation:** Smoke-tested the pipeline at a 10,000-record batch size to verify PySpark partition writes and S3 layout stability.
 - **Automated CI/CD:** GitHub Actions workflow runs on every push to lint code and execute unit tests.
 
 ---
@@ -216,8 +218,8 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 - **No Hardcoded Secrets:** The repository does not contain any real AWS credentials. Mock credentials (`test`) are used exclusively for the **LocalStack** environment.
 - **Environment Variables:** Sensitive configurations (Airflow passwords, LocalStack keys) are managed via a `.env` file, which is strictly git-ignored.
 - **Local Dev Defaults:** For local emulation, default credentials (`admin`/`admin`) are provided in `.env.example`. For production deployments, these would be replaced by **AWS Secrets Manager** or GitHub Actions Secrets.
-- **Idempotent Scripts:** The IaC deployment scripts are idempotent — they can be run safely multiple times without causing resource duplication.
-- **Network Isolation:** All LocalStack ports (`4566`), Airflow (`8080`), and Streamlit (`8501`) are bound to `127.0.0.1` — not exposed publicly.
+- **Idempotent Scripts:** The IaC deployment scripts are idempotent. They can be run safely multiple times without causing resource duplication.
+- **Network Isolation:** All LocalStack ports (`4566`), Airflow (`8080`), and Streamlit (`8501`) are bound to `127.0.0.1`, not exposed publicly.
 
 ---
 
@@ -231,6 +233,7 @@ MSYS_NO_PATHCONV=1 docker compose exec airflow-scheduler pytest /opt/airflow/tes
 ├── spark_jobs/            # PySpark ETL & Analytics scripts
 ├── dashboards/            # Streamlit App code
 ├── tests/                 # PyTest suite
+├── scripts/               # Diagnostic & data generation scripts
 ├── deploy.py              # OS-Agnostic Infrastructure Provisioning (LocalStack)
 ├── destroy.py             # Environment Teardown Script
 ├── docker-compose.yml     # Multi-container orchestration
@@ -293,7 +296,29 @@ aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-raw-orders/raw/ord
 aws --endpoint-url=http://localhost:4566 s3 ls s3://ecommerce-processed-orders/orders/ --recursive | head -5
 ```
 
-### 7. Clean Up (Optional)
+### 7. Verify Data Quality & Quarantine
+
+I have provided a dedicated diagnostic script to prove that the pipeline correctly handles bad data. This script checks the `ecommerce-quarantine` bucket and prints the exact quality metrics written by PySpark.
+
+```bash
+python scripts/verify_quarantine.py
+```
+
+**What it does:**
+- Connects to LocalStack S3.
+- Fetches any invalid records that were routed to the Quarantine bucket (DLQ).
+- Reads the `quality_metrics.json` file generated by the Spark job.
+- Outputs a clean report showing the failure rate compared to the 20% SLA threshold.
+
+To test the quarantine flow, you can inject a bad record first:
+
+```bash
+python scripts/verify_quarantine.py --inject
+```
+
+Then trigger the DAG in Airflow and run the verify command again.
+
+### 8. Clean Up (Optional)
 
 ```bash
 python destroy.py

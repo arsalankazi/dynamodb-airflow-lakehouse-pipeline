@@ -46,12 +46,20 @@ def lambda_handler(event, context):
         # FIX 2: Use eventID for deterministic idempotency (stable across retries)
         event_id = record.get("eventID", "unknown")
         
-        # Construct S3 key using Hive-style partitioning
-        # Append-only CDC: order_id + event_id ensures each event is a new file, 
-        # but retries overwrite the same file.
+        # FIX 3: Use order_date from the item (not 'now') for partitioning
+        # This ensures retries across hour boundaries produce the same S3 key.
+        order_date_str = item.get("order_date", now.strftime("%Y-%m-%d"))
+        try:
+            order_date_obj = datetime.strptime(order_date_str, "%Y-%m-%d")
+            year, month, day = order_date_obj.year, order_date_obj.month, order_date_obj.day
+        except ValueError:
+            # Fallback to current date if parsing fails
+            year, month, day = now.year, now.month, now.day
+        
+        # Construct S3 key using Hive-style partitioning (deterministic on retry)
         key = (
-            f"raw/orders/year={now.year}/month={now.month:02d}/"
-            f"day={now.day:02d}/hour={now.hour:02d}/"
+            f"raw/orders/year={year}/month={month:02d}/"
+            f"day={day:02d}/"
             f"{item['order_id']}_{event_id}.json"
         )
         
